@@ -2,7 +2,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { FloorID, NavNode, Unit, Floor, Point, VisualizationMode, NavigationStatus, KioskDevice } from '../types';
 import { INITIAL_FLOORS } from '../constants';
-import { MallLocation } from '../services/gpsService';
 
 interface MapViewerProps {
   floor: Floor;
@@ -10,27 +9,24 @@ interface MapViewerProps {
   nodes: NavNode[];
   activePath: NavNode[];
   selectedUnit: Unit | null;
-  userLocation: MallLocation | null;
+  userLocation: { x: number; y: number; floor: FloorID } | null;
   onUnitClick: (u: Unit) => void;
   isEmergency?: boolean;
   isEditMode?: boolean;
   onUpdateUnit?: (u: Unit) => void;
   isArabic: boolean;
-  isDrawingMode?: boolean;
-  onCompleteDrawing?: (poly: Point[]) => void;
   mode?: VisualizationMode;
-  onAddUnitAtPoint?: (x: number, y: number, draft?: Partial<Unit>) => void;
   navStatus?: NavigationStatus;
   onNavComplete?: () => void;
   onNavExit?: () => void;
   kioskConfig?: KioskDevice;
 }
 
-const FLOOR_SPACING = 1200; 
+const FLOOR_SPACING = 1400; 
 
 const MapViewer: React.FC<MapViewerProps> = ({ 
-  floor, units, nodes, activePath, selectedUnit, userLocation, onUnitClick, isEmergency, isEditMode, onUpdateUnit, isArabic, isDrawingMode, onCompleteDrawing,
-  mode = VisualizationMode.VIEW_2D, onAddUnitAtPoint, navStatus = 'idle', onNavComplete, onNavExit, kioskConfig
+  floor, units, nodes, activePath, selectedUnit, userLocation, onUnitClick, isEmergency, isEditMode, onUpdateUnit, isArabic,
+  mode = VisualizationMode.VIEW_2D, navStatus = 'idle', onNavComplete, onNavExit, kioskConfig
 }) => {
   const mapWidth = 3200; 
   const mapHeight = 1536;
@@ -39,11 +35,14 @@ const MapViewer: React.FC<MapViewerProps> = ({
   const [navProgress, setNavProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   
+  // Editing State
+  const [editingPointIndex, setEditingPointIndex] = useState<number | null>(null);
+
   const dragStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
-  const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const isCinematic = mode === VisualizationMode.VIEW_CINEMATIC || navStatus === 'following';
+  const isCinematic = navStatus === 'following' || navStatus === 'calculating';
+  const isStackedView = mode === VisualizationMode.VIEW_4D || isCinematic;
 
   const mallSlabPoints = [
     [50, 250], [800, 250], [800, 450], [2400, 450], [2400, 250], [3150, 250], 
@@ -54,8 +53,12 @@ const MapViewer: React.FC<MapViewerProps> = ({
   const fitToScreen = useCallback(() => {
     if (!containerRef.current || isCinematic) return;
     const { clientWidth, clientHeight } = containerRef.current;
-    const initialScale = Math.min(clientWidth / mapWidth, clientHeight / mapHeight) * 0.85;
-    setView({ scale: initialScale, translateX: (clientWidth - mapWidth * initialScale) / 2, translateY: (clientHeight - mapHeight * initialScale) / 2 });
+    const initialScale = Math.min(clientWidth / mapWidth, clientHeight / mapHeight) * 0.8;
+    setView({ 
+      scale: initialScale, 
+      translateX: (clientWidth - mapWidth * initialScale) / 2, 
+      translateY: (clientHeight - mapHeight * initialScale) / 2 
+    });
   }, [mapWidth, mapHeight, isCinematic]);
 
   useEffect(() => {
@@ -65,122 +68,255 @@ const MapViewer: React.FC<MapViewerProps> = ({
     return () => observer.disconnect();
   }, [fitToScreen]);
 
+  const getSVGCoords = (clientX: number, clientY: number) => {
+    if (!containerRef.current) return { x: 0, y: 0 };
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = (clientX - rect.left - view.translateX) / view.scale;
+    const y = (clientY - rect.top - view.translateY) / view.scale;
+    return { x, y };
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (isCinematic) return;
+    if (editingPointIndex !== null) return; // Prevent map drag while editing point
+
+    setIsDragging(true);
+    dragStart.current = { 
+      x: e.clientX, 
+      y: e.clientY, 
+      tx: view.translateX, 
+      ty: view.translateY 
+    };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isCinematic) return;
+
+    if (isEditMode && selectedUnit && editingPointIndex !== null && onUpdateUnit) {
+      const coords = getSVGCoords(e.clientX, e.clientY);
+      const newPolygon = [...selectedUnit.polygon];
+      newPolygon[editingPointIndex] = [Math.round(coords.x), Math.round(coords.y)];
+      onUpdateUnit({ ...selectedUnit, polygon: newPolygon });
+      return;
+    }
+
+    if (!isDragging) return;
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    setView(prev => ({
+      ...prev,
+      translateX: dragStart.current.tx + dx,
+      translateY: dragStart.current.ty + dy
+    }));
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    setEditingPointIndex(null);
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (isCinematic) return;
+    const delta = -e.deltaY;
+    const zoomFactor = Math.pow(1.1, delta / 100);
+    
+    setView(prev => {
+      const newScale = Math.max(0.1, Math.min(3, prev.scale * zoomFactor));
+      
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        const dx = (mouseX - prev.translateX) / prev.scale;
+        const dy = (mouseY - prev.translateY) / prev.scale;
+        
+        return {
+          scale: newScale,
+          translateX: mouseX - dx * newScale,
+          translateY: mouseY - dy * newScale
+        };
+      }
+      return { ...prev, scale: newScale };
+    });
+  };
+
+  const handleAddVertex = (e: React.MouseEvent, index: number) => {
+    e.stopPropagation();
+    if (!selectedUnit || !onUpdateUnit) return;
+    
+    const p1 = selectedUnit.polygon[index];
+    const p2 = selectedUnit.polygon[(index + 1) % selectedUnit.polygon.length];
+    const midPoint: Point = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+    
+    const newPolygon = [...selectedUnit.polygon];
+    newPolygon.splice(index + 1, 0, midPoint);
+    onUpdateUnit({ ...selectedUnit, polygon: newPolygon });
+  };
+
+  const handleDeleteVertex = (e: React.MouseEvent, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedUnit || !onUpdateUnit || selectedUnit.polygon.length <= 3) return;
+    
+    const newPolygon = [...selectedUnit.polygon];
+    newPolygon.splice(index, 1);
+    onUpdateUnit({ ...selectedUnit, polygon: newPolygon });
+  };
+
   useEffect(() => {
     if (navStatus === 'following' && activePath.length > 0) {
       let progress = 0;
-      const step = 0.005; 
-      let cancelled = false;
-      
+      const totalSteps = activePath.length - 1;
+      const speed = 0.003; 
+      let frameHandle: number;
+
       const animate = () => {
-        if (cancelled) return;
-        progress += step;
+        progress += speed;
         if (progress >= 1) {
           setNavProgress(1);
           if (onNavComplete) onNavComplete();
           return;
         }
-        
+
         setNavProgress(progress);
         
-        const pathIndex = Math.floor(progress * (activePath.length - 1));
+        const pathIndex = Math.floor(progress * totalSteps);
+        const nextIndex = Math.min(pathIndex + 1, totalSteps);
         const currentNode = activePath[pathIndex];
-        const nextNode = activePath[pathIndex + 1] || currentNode;
+        const nextNode = activePath[nextIndex];
         
-        const partial = (progress * (activePath.length - 1)) % 1;
-        const curX = currentNode.x + (nextNode.x - currentNode.x) * partial;
-        const curY = currentNode.y + (nextNode.y - currentNode.y) * partial;
+        const lerp = (progress * totalSteps) % 1;
         
-        const floorObj = INITIAL_FLOORS.find(f => f.id === currentNode.floor);
-        const nextFloorObj = INITIAL_FLOORS.find(f => f.id === nextNode.floor);
-        const floorZ = ((floorObj?.order || 0) * FLOOR_SPACING) + (((nextFloorObj?.order || 0) - (floorObj?.order || 0)) * FLOOR_SPACING * partial);
+        const curX = currentNode.x + (nextNode.x - currentNode.x) * lerp;
+        const curY = currentNode.y + (nextNode.y - currentNode.y) * lerp;
+        
+        const currentFloorObj = INITIAL_FLOORS.find(f => f.id === currentNode.floor)!;
+        const nextFloorObj = INITIAL_FLOORS.find(f => f.id === nextNode.floor)!;
+        const curZ = (currentFloorObj.order * -FLOOR_SPACING) + ((nextFloorObj.order - currentFloorObj.order) * -FLOOR_SPACING * lerp);
 
         if (containerRef.current) {
           const { clientWidth, clientHeight } = containerRef.current;
           setView({
-            scale: 0.85, 
-            translateX: (clientWidth / 2) - (curX * 0.85),
-            translateY: (clientHeight / 2) - ((curY + floorZ) * 0.45)
+            scale: 0.9, 
+            translateX: (clientWidth / 2) - (curX * 0.9),
+            translateY: (clientHeight / 2) - ((curY + curZ) * 0.45) 
           });
         }
         
-        requestAnimationFrame(animate);
+        frameHandle = requestAnimationFrame(animate);
       };
-      
-      const handle = requestAnimationFrame(animate);
-      return () => {
-        cancelled = true;
-        cancelAnimationFrame(handle);
-      };
-    } else {
-        setNavProgress(0);
+
+      frameHandle = requestAnimationFrame(animate);
+      return () => cancelAnimationFrame(frameHandle);
     }
   }, [navStatus, activePath, onNavComplete]);
 
   const viewportTransform = useMemo(() => {
     const base = `translate(${view.translateX}px, ${view.translateY}px) scale(${view.scale})`;
-    if (isCinematic || mode === VisualizationMode.VIEW_3D || mode === VisualizationMode.VIEW_4D) {
-      return `${base} perspective(3000px) rotateX(48deg) rotateZ(-12deg)`;
+    if (isStackedView || mode === VisualizationMode.VIEW_3D) {
+      return `${base} perspective(2500px) rotateX(45deg) rotateZ(-10deg)`;
     }
     return base;
-  }, [view, mode, isCinematic]);
+  }, [view, isStackedView, mode]);
 
   const renderFloorSlab = (f: Floor) => {
     const isActive = isCinematic ? true : f.id === floor.id;
     const floorUnits = units.filter(u => u.floor === f.id);
-    const isStackedMode = mode === VisualizationMode.VIEW_4D || isCinematic;
-    const zOffset = isCinematic ? (f.order * -FLOOR_SPACING) : 0;
+    const zOffset = isStackedView ? (f.order * -FLOOR_SPACING) : 0;
 
     return (
       <g 
         key={f.id} 
-        opacity={isActive ? 1 : 0.04} 
+        opacity={isActive ? 1 : 0.05} 
         transform={`translate(0, ${zOffset})`}
         style={{ transition: 'transform 1.5s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.5s' }}
       >
         <polygon 
           points={mallSlabPoints} 
-          fill={isStackedMode ? "#111111" : "#ffffff"} 
-          stroke={isStackedMode ? "rgba(212, 175, 55, 0.2)" : "rgba(203, 213, 225, 0.5)"} 
-          strokeWidth="3" 
+          fill={isStackedView ? "#121212" : "#ffffff"} 
+          stroke={isStackedView ? "rgba(212, 175, 55, 0.3)" : "rgba(203, 213, 225, 0.4)"} 
+          strokeWidth="4" 
           pointerEvents="none" 
         />
 
-        {(mode !== VisualizationMode.VIEW_2D || isActive) && (
-          <text 
-            x="100" y="350" 
-            fill={isStackedMode ? "#d4af37" : "#cbd5e1"} 
-            fontSize="48" 
-            fontWeight="900" 
-            className="uppercase tracking-[0.2em] opacity-30 select-none pointer-events-none"
-          >
-            {isArabic ? f.nameAr : f.nameEn}
-          </text>
-        )}
+        <g transform="translate(150, 450)">
+           <text 
+             fill="none"
+             stroke={isStackedView ? "rgba(212, 175, 55, 0.15)" : "rgba(15, 23, 42, 0.08)"}
+             strokeWidth="2"
+             fontSize="360" 
+             fontWeight="900" 
+             className="uppercase select-none pointer-events-none font-black italic tracking-tighter"
+           >
+             {f.id}
+           </text>
+           <text 
+             x="20" y="80"
+             fill={isStackedView ? "#d4af37" : "#0f172a"} 
+             fontSize="64" 
+             fontWeight="900" 
+             className="uppercase tracking-[0.4em] select-none pointer-events-none"
+             style={{ filter: isStackedView ? 'drop-shadow(0 4px 12px rgba(0,0,0,0.8))' : 'none' }}
+           >
+             {isArabic ? f.nameAr : f.nameEn}
+           </text>
+           <line x1="20" y1="120" x2="400" y2="120" stroke={isStackedView ? "#d4af37" : "#0f172a"} strokeWidth="8" strokeLinecap="round" opacity={isActive ? 0.8 : 0.2} />
+        </g>
 
         {floorUnits.map(unit => {
           const isSelected = selectedUnit?.id === unit.id;
           const polyStr = unit.polygon.map(p => p.join(',')).join(' ');
+          const isEscalator = unit.type === 'escalator';
+          const isElevator = unit.type === 'elevator';
           
           return (
-            <g key={unit.id} className="cursor-pointer group" onClick={(e) => { e.stopPropagation(); onUnitClick(unit); }}>
+            <g key={unit.id} className="cursor-pointer" onClick={(e) => { e.stopPropagation(); onUnitClick(unit); }}>
               <polygon 
                 points={polyStr} 
-                fill={isSelected ? "rgba(212, 175, 55, 0.15)" : (isStackedMode ? "#1c1c1c" : "#ffffff")} 
-                stroke={isSelected ? "#d4af37" : (isStackedMode ? "#2a2a2a" : "#cbd5e1")} 
-                strokeWidth={isSelected ? 5 : 1.5} 
+                fill={isSelected ? "rgba(212, 175, 55, 0.2)" : (isEscalator ? "url(#escalatorPattern)" : (isElevator ? (isStackedView ? "#2a2a2a" : "#e2e8f0") : (isStackedView ? "#1a1a1a" : "#ffffff")))} 
+                stroke={isSelected ? "#d4af37" : (isEscalator ? "rgba(212, 175, 55, 0.4)" : (isElevator ? "rgba(212, 175, 55, 0.8)" : (isStackedView ? "#2a2a2a" : "#cbd5e1")))} 
+                strokeWidth={isSelected ? 6 : (isEscalator || isElevator ? 2 : 1.5)} 
                 className="transition-all duration-300 hover:fill-[#d4af3708]"
               />
-              
-              {!isSelected && !isEditMode && (
+              {/* Vertex Manipulation UI (Only in Edit Mode) */}
+              {isEditMode && isSelected && unit.polygon.map((p, i) => {
+                const nextP = unit.polygon[(i + 1) % unit.polygon.length];
+                const midX = (p[0] + nextP[0]) / 2;
+                const midY = (p[1] + nextP[1]) / 2;
+                
+                return (
+                  <g key={`vertex-group-${i}`}>
+                    {/* Main vertex handle */}
+                    <circle 
+                      cx={p[0]} cy={p[1]} r="12" 
+                      fill="white" stroke="#d4af37" strokeWidth="4" 
+                      className="cursor-move hover:scale-150 transition-transform"
+                      onMouseDown={(e) => { e.stopPropagation(); setEditingPointIndex(i); }}
+                      onContextMenu={(e) => handleDeleteVertex(e, i)}
+                    />
+                    {/* Edge mid-point handle for adding vertices */}
+                    <circle 
+                      cx={midX} cy={midY} r="8" 
+                      fill="#d4af37" opacity="0.4"
+                      className="cursor-pointer hover:opacity-100 transition-opacity"
+                      onClick={(e) => handleAddVertex(e, i)}
+                    />
+                  </g>
+                );
+              })}
+              {isElevator && (
                 <text 
-                  x={unit.polygon[0][0] + (unit.polygon[1][0] - unit.polygon[0][0]) / 2} 
-                  y={unit.polygon[0][1] + (unit.polygon[2][1] - unit.polygon[1][1]) / 2}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill={isStackedMode ? "#444" : "#94a3b8"}
-                  fontSize="22"
-                  fontWeight="bold"
-                  className="pointer-events-none select-none opacity-40 uppercase tracking-tighter"
+                  x={(unit.polygon[0][0] + unit.polygon[2][0]) / 2} 
+                  y={(unit.polygon[0][1] + unit.polygon[2][1]) / 2 + 8}
+                  textAnchor="middle" fill={isStackedView ? "#d4af37" : "#475569"} fontSize="20" fontWeight="black" className="pointer-events-none select-none"
+                >
+                  ELV
+                </text>
+              )}
+              {!isSelected && !isEditMode && unit.type !== 'escalator' && unit.type !== 'elevator' && (
+                <text 
+                  x={unit.polygon[0][0] + 50} y={unit.polygon[0][1] + 50} fill={isStackedView ? "#555" : "#94a3b8"} fontSize="24" fontWeight="bold" className="pointer-events-none select-none opacity-40 uppercase tracking-tighter"
                 >
                   {isArabic ? unit.nameAr : unit.nameEn}
                 </text>
@@ -191,9 +327,8 @@ const MapViewer: React.FC<MapViewerProps> = ({
 
         {kioskConfig && kioskConfig.homeFloor === f.id && (
           <g transform={`translate(${kioskConfig.homeX}, ${kioskConfig.homeY})`}>
-            <circle r="40" fill="#3b82f6" opacity="0.15" className="animate-ping" />
-            <circle r="16" fill="white" stroke="#3b82f6" strokeWidth="6" />
-            <circle r="6" fill="#3b82f6" />
+            <circle r="40" fill="#d4af37" opacity="0.1" className="animate-ping" />
+            <circle r="12" fill="white" stroke="#d4af37" strokeWidth="4" />
           </g>
         )}
       </g>
@@ -205,130 +340,96 @@ const MapViewer: React.FC<MapViewerProps> = ({
   return (
     <div 
       ref={containerRef} 
-      className={`w-full h-full relative overflow-hidden transition-colors duration-1000 bg-[#f8fafc] ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`} 
-      onMouseDown={(e) => {
-        if (isCinematic) return; 
-        const isTouchEvent = 'touches' in e;
-        const clientX = isTouchEvent ? (e as React.TouchEvent).touches[0].clientX : (e as React.MouseEvent).clientX;
-        const clientY = isTouchEvent ? (e as React.TouchEvent).touches[0].clientY : (e as React.MouseEvent).clientY;
-        setIsDragging(true);
-        dragStart.current = { x: clientX, y: clientY, tx: view.translateX, ty: view.translateY };
-      }}
-      onWheel={(e) => {
-        if (isCinematic) return;
-        const delta = -e.deltaY;
-        const zoomFactor = Math.pow(1.1, delta / 100);
-        const newScale = Math.max(0.05, Math.min(5, view.scale * zoomFactor));
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-        const dx = (mouseX - view.translateX) / view.scale;
-        const dy = (mouseY - view.translateY) / view.scale;
-        setView({ scale: newScale, translateX: mouseX - dx * newScale, translateY: mouseY - dy * newScale });
-      }}
+      className={`w-full h-full relative overflow-hidden transition-colors duration-1000 bg-[#f8fafc] ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onWheel={handleWheel}
+      onContextMenu={(e) => isEditMode && e.preventDefault()}
     >
       {isCinematic && (
-        <div className="absolute inset-0 pointer-events-none z-[100] flex flex-col justify-between p-16">
-          <div className="animate-in slide-in-from-top-12 duration-1000 flex justify-between items-start">
-            <div className="bg-black/85 backdrop-blur-3xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl">
-              <div className="flex items-center gap-4">
-                 <div className="w-2 h-2 bg-[#d4af37] rounded-full animate-pulse" />
-                 <span className="text-[10px] font-black uppercase tracking-[0.5em] text-white/60">Cinematic Navigation</span>
+        <div className="absolute inset-0 pointer-events-none z-[200] flex flex-col justify-between p-16">
+          <div className="flex justify-between items-start animate-in slide-in-from-top-12 duration-1000">
+            <div className="bg-black/90 backdrop-blur-3xl p-10 rounded-[3rem] border border-white/10 shadow-2xl min-w-[400px]">
+              <div className="flex items-center gap-6 mb-4">
+                 <div className="w-3 h-3 bg-[#d4af37] rounded-full animate-pulse shadow-[0_0_15px_#d4af37]" />
+                 <span className="text-[12px] font-black uppercase tracking-[0.5em] text-white/50">Elite Navigation</span>
               </div>
-              <p className="text-3xl font-light text-white mt-4 tracking-tighter uppercase">
-                {currentPathNode ? (isArabic ? INITIAL_FLOORS.find(f => f.id === currentPathNode.floor)?.nameAr : INITIAL_FLOORS.find(f => f.id === currentPathNode.floor)?.nameEn) : ''}
+              <p className="text-4xl font-light text-white tracking-tighter uppercase mb-2">
+                {selectedUnit ? (isArabic ? selectedUnit.nameAr : selectedUnit.nameEn) : 'Pathfinding...'}
               </p>
+              <div className="flex items-center gap-4">
+                 <span className="text-sm font-bold text-[#d4af37] uppercase tracking-widest">{currentPathNode?.floor || ''}</span>
+                 <span className="w-1.5 h-1.5 bg-white/20 rounded-full" />
+                 <span className="text-sm text-white/40 font-medium uppercase tracking-widest">
+                   {isArabic ? 'اتبع المسار الذهبي' : 'Following Golden Path'}
+                 </span>
+              </div>
             </div>
             
             <button 
-              onClick={(e) => { 
-                e.stopPropagation(); 
-                if(onNavExit) onNavExit(); 
-              }} 
-              className="pointer-events-auto w-24 h-24 bg-white/10 hover:bg-white/20 backdrop-blur-3xl rounded-full flex flex-col items-center justify-center text-white transition-all border border-white/10 group shadow-2xl"
+              onClick={(e) => { e.stopPropagation(); if(onNavExit) onNavExit(); }} 
+              className="pointer-events-auto w-24 h-24 bg-white/10 hover:bg-white/20 backdrop-blur-3xl rounded-full flex flex-col items-center justify-center text-white transition-all border border-white/10 group shadow-2xl active:scale-90"
             >
-              <svg className="w-10 h-10 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" strokeWidth="2.5" strokeLinecap="round"/></svg>
-              <span className="text-[8px] font-black uppercase mt-1 tracking-tighter opacity-60">Exit</span>
+              <svg className="w-10 h-10 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" strokeWidth="3" strokeLinecap="round"/></svg>
+              <span className="text-[10px] font-black uppercase mt-2 tracking-widest opacity-60">Cancel</span>
             </button>
           </div>
 
-          <div className="animate-in slide-in-from-bottom-12 duration-1000 w-full max-w-xl self-center bg-black/85 backdrop-blur-3xl p-10 rounded-[3rem] border border-white/10 shadow-2xl">
+          <div className="self-center w-full max-w-2xl bg-black/90 backdrop-blur-3xl p-10 rounded-[4rem] border border-white/10 shadow-2xl animate-in slide-in-from-bottom-12 duration-1000">
             <div className="flex justify-between items-end mb-6">
-               <p className="text-[10px] font-black uppercase tracking-[0.5em] text-[#d4af37]">Journey Progress</p>
-               <p className="text-[10px] font-black text-white/40 uppercase">{Math.round(navProgress * 100)}%</p>
+               <p className="text-[11px] font-black uppercase tracking-[0.5em] text-[#d4af37]">Progress to Destination</p>
+               <p className="text-2xl font-black text-white/80">{Math.round(navProgress * 100)}%</p>
             </div>
-            <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-               <div className="h-full bg-[#d4af37] shadow-[0_0_25px_#d4af37] transition-all duration-300" style={{ width: `${navProgress * 100}%` }} />
+            <div className="w-full h-2.5 bg-white/10 rounded-full overflow-hidden">
+               <div className="h-full bg-[#d4af37] shadow-[0_0_20px_#d4af37] transition-all duration-300" style={{ width: `${navProgress * 100}%` }} />
             </div>
-            <p className="text-sm text-white/50 mt-8 font-medium tracking-wide">
-               {isArabic ? 'اتبع المسار الذهبي للوصول إلى وجهتك.' : 'Follow the golden spline to your destination.'}
-            </p>
           </div>
         </div>
       )}
 
-      {!isCinematic && (
-        <div className="absolute right-12 bottom-32 z-50 flex flex-col gap-4">
-          <button onClick={() => setView(v => ({ ...v, scale: Math.min(5, v.scale * 1.3) }))} className="w-16 h-16 bg-white shadow-2xl rounded-2xl flex items-center justify-center text-slate-900 active:scale-90 transition-all border border-slate-200">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4" strokeWidth="3" strokeLinecap="round"/></svg>
-          </button>
-          <button onClick={() => setView(v => ({ ...v, scale: Math.max(0.05, v.scale / 1.3) }))} className="w-16 h-16 bg-white shadow-2xl rounded-2xl flex items-center justify-center text-slate-900 active:scale-90 transition-all border border-slate-200">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 12H4" strokeWidth="3" strokeLinecap="round"/></svg>
-          </button>
-        </div>
-      )}
-
-      <div style={{ transform: viewportTransform }} className="w-full h-full flex items-center justify-center transition-transform duration-200 ease-out origin-center">
-        <svg ref={svgRef} viewBox={`0 0 ${mapWidth} ${mapHeight}`} className="overflow-visible w-full h-full">
+      <div style={{ transform: viewportTransform }} className="w-full h-full flex items-center justify-center transition-transform duration-300 ease-out origin-center pointer-events-none">
+        <svg viewBox={`0 0 ${mapWidth} ${mapHeight}`} className="overflow-visible w-full h-full pointer-events-auto">
           <defs>
-            <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <filter id="navGlow" x="-100%" y="-100%" width="300%" height="300%">
               <feGaussianBlur stdDeviation="15" result="blur" />
               <feComposite in="SourceGraphic" in2="blur" operator="over" />
             </filter>
+            <pattern id="escalatorPattern" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+               <rect width="12" height="12" fill={isStackedView ? "#1a1a1a" : "#f1f5f9"} />
+               <line x1="0" y1="0" x2="0" y2="12" stroke={isStackedView ? "rgba(212,175,55,0.4)" : "rgba(15,23,42,0.2)"} strokeWidth="6" />
+            </pattern>
           </defs>
 
           {INITIAL_FLOORS.map(f => renderFloorSlab(f))}
           
           {activePath.length > 1 && (
-            <g filter="url(#glow)">
+            <g filter="url(#navGlow)">
               {activePath.map((node, i) => {
                 if (i === 0) return null;
                 const prev = activePath[i-1];
-                const f = INITIAL_FLOORS.find(fl => fl.id === node.floor);
-                const pf = INITIAL_FLOORS.find(fl => fl.id === prev.floor);
-                const z = isCinematic ? (f?.order || 0) * -FLOOR_SPACING : 0;
-                const pz = isCinematic ? (pf?.order || 0) * -FLOOR_SPACING : 0;
+                const f = INITIAL_FLOORS.find(fl => fl.id === node.floor)!;
+                const pf = INITIAL_FLOORS.find(fl => fl.id === prev.floor)!;
+                const z = isStackedView ? f.order * -FLOOR_SPACING : 0;
+                const pz = isStackedView ? pf.order * -FLOOR_SPACING : 0;
+                
                 return (
                   <line 
-                    key={`path-${i}`}
+                    key={`path-base-${i}`}
                     x1={prev.x} y1={prev.y + pz}
                     x2={node.x} y2={node.y + z}
                     stroke="#d4af37"
-                    strokeWidth={isCinematic ? "28" : "14"}
+                    strokeWidth={isCinematic ? "32" : "18"}
                     strokeLinecap="round"
-                    opacity={0.4}
+                    opacity={0.3}
                   />
                 );
               })}
               <polyline 
                 points={activePath.map(n => {
-                  const f = INITIAL_FLOORS.find(fl => fl.id === n.floor);
-                  const z = isCinematic ? (f?.order || 0) * -FLOOR_SPACING : 0;
-                  return `${n.x},${n.y + z}`;
-                }).join(' ')} 
-                fill="none" 
-                stroke="white" 
-                strokeWidth={isCinematic ? "8" : "4"} 
-                strokeLinecap="round" 
-                strokeLinejoin="round"
-                strokeDasharray="1,20"
-                className="animate-path-flow"
-              />
-              <polyline 
-                points={activePath.map(n => {
-                  const f = INITIAL_FLOORS.find(fl => fl.id === n.floor);
-                  const z = isCinematic ? (f?.order || 0) * -FLOOR_SPACING : 0;
+                  const f = INITIAL_FLOORS.find(f => f.id === n.floor)!;
+                  const z = isStackedView ? f.order * -FLOOR_SPACING : 0;
                   return `${n.x},${n.y + z}`;
                 }).join(' ')} 
                 fill="none" 
@@ -336,26 +437,28 @@ const MapViewer: React.FC<MapViewerProps> = ({
                 strokeWidth={isCinematic ? "12" : "6"} 
                 strokeLinecap="round" 
                 strokeLinejoin="round"
+                strokeDasharray="1,20"
+                className="animate-path-pulse"
               />
             </g>
           )}
 
           {activePath.length > 0 && (
-            <g transform={`translate(${activePath[activePath.length-1].x}, ${activePath[activePath.length-1].y + (isCinematic ? (INITIAL_FLOORS.find(f => f.id === activePath[activePath.length-1].floor)?.order || 0) * -FLOOR_SPACING : 0)})`}>
-               <circle r="45" fill="#d4af37" opacity="0.3" className="animate-ping" />
-               <circle r="15" fill="white" stroke="#d4af37" strokeWidth="5" />
+            <g transform={`translate(${activePath[activePath.length-1].x}, ${activePath[activePath.length-1].y + (isStackedView ? (INITIAL_FLOORS.find(f => f.id === activePath[activePath.length-1].floor)?.order || 0) * -FLOOR_SPACING : 0)})`}>
+               <circle r="60" fill="#d4af37" opacity="0.2" className="animate-ping" />
+               <circle r="20" fill="white" stroke="#d4af37" strokeWidth="6" />
             </g>
           )}
         </svg>
       </div>
 
       <style dangerouslySetInnerHTML={{ __html: `
-        @keyframes path-flow {
-          from { stroke-dashoffset: 100; }
+        @keyframes path-pulse {
+          from { stroke-dashoffset: 200; }
           to { stroke-dashoffset: 0; }
         }
-        .animate-path-flow {
-          animation: path-flow 2s linear infinite;
+        .animate-path-pulse {
+          animation: path-pulse 4s linear infinite;
         }
       `}} />
     </div>
