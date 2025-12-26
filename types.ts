@@ -1,4 +1,5 @@
 
+
 export enum FloorID {
   B = 'B',
   GL = 'GL',
@@ -93,19 +94,8 @@ export interface Unit {
   bannerUrl?: string;
   phoneNumber?: string;
   conversionCount?: number;
-  
-  addressLine1?: string;
-  addressLine2?: string;
-  city?: string;
-
-  targetFloor?: FloorID;
-  targetUnitId?: string;
-  
-  liveOccupancy?: number;
-  parkingCapacity?: { total: number; available: number };
-  checkStockUrl?: string;
   preOrderEnabled?: boolean;
-  lastSanitized?: number;
+  checkStockUrl?: string;
 }
 
 export interface NavNode {
@@ -116,7 +106,6 @@ export interface NavNode {
   x: number;
   y: number;
   type: 'corridor' | 'elevator' | 'escalator' | 'atrium' | 'exit' | 'parking';
-  liveCrowdDensity?: number;
   isLandmark?: boolean;
   landmarkIcon?: string;
 }
@@ -127,11 +116,11 @@ export interface Connection {
   accessible: boolean;
   isBlocked?: boolean; 
   distanceWeight?: number; 
-  isRestricted?: boolean;
+  // Fix: Added isRestricted to resolve error in services/routingService.ts on line 61
+  isRestricted?: boolean; 
 }
 
-export type RouteMode = 'shortest' | 'accessible' | 'stroller' | 'emergency';
-
+// Fix: Added ZoneLabel interface used in constants.tsx
 export interface ZoneLabel {
   id: string;
   floor: FloorID;
@@ -139,9 +128,9 @@ export interface ZoneLabel {
   y: number;
   nameEn: string;
   nameAr: string;
-  rotation?: number;
 }
 
+// Fix: Added Kiosk interface used in constants.tsx
 export interface Kiosk {
   id: string;
   floor: FloorID;
@@ -150,16 +139,20 @@ export interface Kiosk {
   name: string;
 }
 
-export interface SearchLog {
-  query: string;
-  timestamp: number;
-  success: boolean;
-  resultId?: string;
+export interface KioskDevice {
+  id: string;
+  name: string;
+  homeFloor: FloorID;
+  homeX: number;
+  homeY: number;
+  lastMaintenance: number;
 }
 
-export interface InteractionLog {
-  id: string;
-  timestamp: number;
-  type: string;
-  details?: any;
+export type RouteMode = 'shortest' | 'accessible' | 'stroller' | 'emergency';
+
+export interface MallState {
+  units: Unit[];
+  categories: MallCategory[];
+  kioskConfig: KioskDevice;
+  isEmergency: boolean;
 }

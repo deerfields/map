@@ -1,14 +1,17 @@
-import { Unit, MallCategory, Kiosk, SearchLog } from '../types';
-import { INITIAL_UNITS, INITIAL_CATEGORIES, INITIAL_KIOSKS } from '../constants';
 
-const STORAGE_KEY = 'Data2st_Mall_State';
+import { Unit, MallCategory, MallState, KioskDevice, FloorID } from '../types';
+import { INITIAL_UNITS, INITIAL_CATEGORIES } from '../constants';
 
-interface MallState {
-  units: Unit[];
-  categories: MallCategory[];
-  kiosks: Kiosk[];
-  searchLogs: SearchLog[];
-}
+const STORAGE_KEY = 'Deerfields_Mall_State_v2';
+
+const DEFAULT_KIOSK: KioskDevice = {
+  id: 'KIOSK-01',
+  name: 'Main Atrium Kiosk',
+  homeFloor: FloorID.ML,
+  homeX: 1600,
+  homeY: 850,
+  lastMaintenance: Date.now()
+};
 
 export const loadMallData = (): MallState => {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -16,15 +19,15 @@ export const loadMallData = (): MallState => {
     try {
       return JSON.parse(saved);
     } catch (e) {
-      console.error("Failed to parse storage", e);
+      console.error("Storage corruption detected. Resetting to defaults.", e);
     }
   }
   
   const initialState: MallState = {
     units: INITIAL_UNITS,
     categories: INITIAL_CATEGORIES,
-    kiosks: INITIAL_KIOSKS,
-    searchLogs: [],
+    kioskConfig: DEFAULT_KIOSK,
+    isEmergency: false
   };
   saveMallData(initialState);
   return initialState;

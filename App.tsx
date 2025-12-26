@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { FloorID, Unit, NavNode, Connection, Floor, MallCategory, RouteMode, Point, VisualizationMode } from './types';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { FloorID, Unit, NavNode, Connection, Floor, MallCategory, VisualizationMode, KioskDevice } from './types';
 import { INITIAL_FLOORS, INITIAL_NODES, INITIAL_CONNECTIONS } from './constants';
 import MapViewer from './components/MapViewer';
 import Sidebar from './components/Sidebar';
@@ -13,14 +13,8 @@ import { searchMall } from './services/geminiService';
 import { findPath } from './services/routingService';
 
 const App: React.FC = () => {
-  const [floors] = useState<Floor[]>(INITIAL_FLOORS);
-  const [nodes] = useState<NavNode[]>(INITIAL_NODES);
-  const [connections] = useState<Connection[]>(INITIAL_CONNECTIONS);
-  
-  const [units, setUnits] = useState<Unit[]>([]);
-  const [categories, setCategories] = useState<MallCategory[]>([]);
+  const [mallState, setMallState] = useState(() => loadMallData());
   const [isDataReady, setIsDataReady] = useState(false);
-  const [isEmergency, setIsEmergency] = useState(false);
   const [isArabic, setIsArabic] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -35,65 +29,37 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    const savedData = loadMallData();
-    setUnits(savedData.units);
-    setCategories(savedData.categories);
     setIsDataReady(true);
-  }, []);
+    setCurrentFloorID(mallState.kioskConfig.homeFloor);
+  }, [mallState.kioskConfig.homeFloor]);
 
-  const handleUpdateUnit = useCallback((updatedUnit: Unit) => {
-    setUnits(prev => {
-      const next = prev.map(u => u.id === updatedUnit.id ? updatedUnit : u);
-      saveMallData({ ...loadMallData(), units: next });
-      return next;
-    });
-  }, []);
-
-  const handleCompleteDrawing = (poly: Point[]) => {
-    const newUnit: Unit = {
-      id: `UNIT-${Date.now()}`,
-      nameEn: 'Implemented Canvas Asset',
-      nameAr: 'أصل جديد',
-      type: 'store',
-      category: 'cat-fashion',
-      floor: currentFloorID,
-      mallAddress: 'DESIGN-001',
-      polygon: poly,
-      status: 'coming_soon',
-      tags: [],
-      attributes: [],
-      storeNumber: '00',
-      openingTime: '10:00',
-      closingTime: '22:00',
-      entryNodeId: 'ML-NODE-ATRIUM',
-      areaSqm: 0, 
-      heightMeters: 4,
-      volumeCum: 0
-    };
-    const nextUnits = [newUnit, ...units];
-    setUnits(nextUnits);
-    saveMallData({ ...loadMallData(), units: nextUnits });
-    setSelectedDestination(newUnit);
-    setIsDrawingMode(false);
-    setIsEditMode(true);
-    setShowAdmin(true); 
+  const handleUpdateMallState = (updates: Partial<typeof mallState>) => {
+    const newState = { ...mallState, ...updates };
+    setMallState(newState);
+    saveMallData(newState);
   };
 
   const handleGetDirections = (unit: Unit) => {
-    // Defaulting starting point to the Grand Atrium for kiosk simulation
-    const startNodeId = 'ML-NODE-ATRIUM';
-    const path = findPath(startNodeId, unit.entryNodeId, nodes, connections, 'shortest');
+    // Determine the closest navigation node to the Kiosk's home position
+    const kioskNode: NavNode = {
+      id: 'KIOSK-START',
+      floor: mallState.kioskConfig.homeFloor,
+      x: mallState.kioskConfig.homeX,
+      y: mallState.kioskConfig.homeY,
+      type: 'corridor'
+    };
+
+    const path = findPath(kioskNode.id, unit.entryNodeId, [kioskNode, ...INITIAL_NODES], INITIAL_CONNECTIONS, 'shortest');
     if (path.length > 0) {
       setActivePath(path);
-      // Ensure we switch to the floor where the path starts
       setCurrentFloorID(path[0].floor);
     }
   };
 
   const executeSearch = async (q: string) => {
-    const res = await searchMall(q, units);
+    const res = await searchMall(q, mallState.units);
     if (res.found) {
-      const foundUnit = units.find(u => u.id === res.storeId);
+      const foundUnit = mallState.units.find(u => u.id === res.storeId);
       if (foundUnit) {
         setSelectedDestination(foundUnit);
         setCurrentFloorID(foundUnit.floor);
@@ -118,11 +84,12 @@ const App: React.FC = () => {
           setSelectedDestination(null);
           setSearchQuery('');
           setActivePath([]);
+          setCurrentFloorID(mallState.kioskConfig.homeFloor);
         }}
         onToggleLang={() => setIsArabic(!isArabic)}
         onOpenAdmin={() => setShowAdmin(true)}
-        categories={categories}
-        units={units}
+        categories={mallState.categories}
+        units={mallState.units}
         onSelectStore={(u) => {
           setSelectedDestination(u);
           setCurrentFloorID(u.floor);
@@ -133,31 +100,47 @@ const App: React.FC = () => {
         onSetRouteMode={() => {}}
         onOpenAI={() => setShowAI(true)}
         isOnline={true}
-        isEmergency={isEmergency}
+        isEmergency={mallState.isEmergency}
         onGetDirections={handleGetDirections}
       />
 
       <main className="flex-1 relative h-full">
         <MapViewer 
-          floor={floors.find(f => f.id === currentFloorID)!} 
-          units={units} 
-          nodes={nodes} 
+          floor={INITIAL_FLOORS.find(f => f.id === currentFloorID)!} 
+          units={mallState.units} 
+          nodes={INITIAL_NODES} 
           activePath={activePath} 
           selectedUnit={selectedDestination} 
-          userLocation={null} 
+          userLocation={{ x: mallState.kioskConfig.homeX, y: mallState.kioskConfig.homeY, floor: mallState.kioskConfig.homeFloor, accuracy: 0 }} 
           onUnitClick={(u) => {
             setSelectedDestination(u);
             setActivePath([]);
           }}
           isEditMode={isEditMode}
           isDrawingMode={isDrawingMode}
-          onUpdateUnit={handleUpdateUnit}
-          onCompleteDrawing={handleCompleteDrawing}
+          onUpdateUnit={(u) => {
+            const nextUnits = mallState.units.map(unit => unit.id === u.id ? u : unit);
+            handleUpdateMallState({ units: nextUnits });
+          }}
           isArabic={isArabic}
           mode={visMode}
         />
         
-        {/* Visualization Mode Switcher */}
+        {/* You Are Here Indicator (Kiosk Specific) */}
+        {currentFloorID === mallState.kioskConfig.homeFloor && (
+          <div 
+            className="absolute z-40 pointer-events-none transform -translate-x-1/2 -translate-y-1/2"
+            style={{ 
+              left: `${mallState.kioskConfig.homeX}px`, 
+              top: `${mallState.kioskConfig.homeY}px`,
+              display: visMode === VisualizationMode.VIEW_2D ? 'block' : 'none' 
+            }}
+          >
+            <div className="w-10 h-10 bg-blue-500 rounded-full border-4 border-white shadow-2xl animate-pulse" />
+            <div className="bg-blue-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full mt-2 uppercase text-center shadow-lg">YOU</div>
+          </div>
+        )}
+
         <div className={`absolute bottom-10 z-30 flex bg-[#111111] p-1.5 rounded-full shadow-2xl border border-white/10 ${isArabic ? 'left-32' : 'right-32'}`}>
            {Object.values(VisualizationMode).map(mode => (
              <button 
@@ -175,13 +158,18 @@ const App: React.FC = () => {
 
       {showAdmin && (
         <AdminDashboard 
-          units={units} 
+          units={mallState.units} 
+          kioskConfig={mallState.kioskConfig}
           onClose={() => setShowAdmin(false)} 
-          isEmergency={isEmergency}
-          onTriggerEmergency={() => setIsEmergency(!isEmergency)}
+          isEmergency={mallState.isEmergency}
+          onTriggerEmergency={() => handleUpdateMallState({ isEmergency: !mallState.isEmergency })}
           onEnterEditMode={() => { setShowAdmin(false); setIsEditMode(true); }}
           onEnterDrawingMode={() => { setShowAdmin(false); setIsDrawingMode(true); }}
-          onUpdateUnit={handleUpdateUnit}
+          onUpdateUnit={(u) => {
+             const nextUnits = mallState.units.map(unit => unit.id === u.id ? u : unit);
+             handleUpdateMallState({ units: nextUnits });
+          }}
+          onUpdateKiosk={(config) => handleUpdateMallState({ kioskConfig: config })}
         />
       )}
 
@@ -189,10 +177,10 @@ const App: React.FC = () => {
         <AIConcierge 
           isOpen={showAI} 
           onClose={() => setShowAI(false)} 
-          units={units} 
+          units={mallState.units} 
           isArabic={isArabic} 
           onNavigate={(id) => { 
-            const u = units.find(unit => unit.id === id);
+            const u = mallState.units.find(unit => unit.id === id);
             if (u) {
               setSelectedDestination(u);
               setCurrentFloorID(u.floor);
@@ -209,7 +197,7 @@ const App: React.FC = () => {
         <VirtualKeyboard 
           value={searchQuery}
           isArabic={isArabic}
-          units={units}
+          units={mallState.units}
           onChange={setSearchQuery}
           onEnter={() => executeSearch(searchQuery)}
           onClose={() => setShowKeyboard(false)}
