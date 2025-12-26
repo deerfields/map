@@ -1,0 +1,105 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Deerfields Mall | The Concierge</title>
+    <meta name="theme-color" content="#111111">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;300;400;500;600;700&family=Noto+Sans+Arabic:wght@100;300;400;500;600;700&family=Cormorant+Garamond:ital,wght@1,300;1,400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+          --charcoal: #0a0a0a;
+          --porcelain: #fcfcfc;
+          --gold: #d4af37;
+          --gold-muted: #b08d57;
+          --text-secondary: #888888;
+        }
+        body { 
+          font-family: 'Inter', 'Noto Sans Arabic', sans-serif; 
+          user-select: none;
+          -webkit-user-select: none;
+          overscroll-behavior: none;
+          overflow: hidden;
+          background: var(--charcoal);
+          color: white;
+        }
+        
+        .font-serif-elegant {
+          font-family: 'Cormorant Garamond', serif;
+          font-style: italic;
+        }
+
+        * {
+            -webkit-user-drag: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        ::-webkit-scrollbar { display: none; }
+        
+        .glass-dark {
+          background: rgba(10, 10, 10, 0.7);
+          backdrop-filter: blur(40px);
+          -webkit-backdrop-filter: blur(40px);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .gold-gradient-text {
+          background: linear-gradient(135deg, #d4af37 0%, #f9e297 50%, #b08d57 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+
+        .animate-fade-in-up {
+          animation: fadeInUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(30px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .pillar-card {
+          transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+          border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .pillar-card:hover {
+          background: rgba(255, 255, 255, 0.05);
+          border-color: rgba(212, 175, 55, 0.3);
+          transform: translateY(-8px);
+        }
+
+        .hero-glow {
+          position: absolute;
+          width: 600px;
+          height: 600px;
+          background: radial-gradient(circle, rgba(212, 175, 55, 0.08) 0%, transparent 70%);
+          filter: blur(60px);
+          pointer-events: none;
+        }
+
+        html, body, #root { height: 100%; width: 100%; position: fixed; top: 0; left: 0; }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+    "@playwright/test": "https://esm.sh/@playwright/test@^1.57.0",
+    "@percy/playwright": "https://esm.sh/@percy/playwright@^1.0.10"
+  }
+}
+</script>
+</head>
+<body oncontextmenu="return false;">
+    <div id="root"></div>
+    <script type="module" src="index.tsx"></script>
+</body>
+</html>

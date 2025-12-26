@@ -1,0 +1,9 @@
+{
+  "name": "Smart Mall Digital Wayfinding",
+  "description": "An AI-powered indoor navigation system for large shopping malls featuring vector-based maps, A* pathfinding, and Gemini-driven voice search.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
