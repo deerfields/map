@@ -53,8 +53,8 @@ class SpatialDB {
               id: 'KIOSK-DF-01',
               name: 'Deerfields Main Concierge',
               homeFloor: FloorID.ML,
-              homeX: 1600,
-              homeY: 850,
+              homeX: 1400,
+              homeY: 750,
               lastMaintenance: Date.now()
             },
             kiosksHealth: [],

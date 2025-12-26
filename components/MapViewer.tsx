@@ -50,10 +50,22 @@ const MapViewer: React.FC<MapViewerProps> = ({
   const isCinematic = navStatus === 'following' || navStatus === 'calculating';
   const isStackedView = mode === VisualizationMode.VIEW_4D || isCinematic;
 
+  // Digitized floor outline from actual Deerfields Mall Main Level floor plan
   const mallSlabPoints = [
-    [50, 250], [800, 250], [800, 450], [2400, 450], [2400, 250], [3150, 250], 
-    [3150, 1250], [2400, 1250], [2400, 1050], [1850, 1050], [1800, 1200], 
-    [1400, 1200], [1350, 1050], [800, 1050], [800, 1250], [50, 1250]
+    // Top edge - left to right
+    [100, 200], [600, 200], [600, 330], [200, 330], [200, 200], [600, 200],
+    [600, 470], [2400, 470], [2400, 200], [3100, 200],
+
+    // Right edge - Carrefour wing
+    [3100, 1000], [2400, 1000],
+
+    // Bottom edge H&M area
+    [2400, 1100], [1950, 1100], [1950, 1000], [1550, 1000], [1550, 850],
+
+    // Bottom edge - central & left
+    [1100, 850], [950, 850], [950, 770], [800, 770], [800, 1050],
+    [480, 1050], [480, 750], [270, 750], [270, 550], [200, 550], [200, 650],
+    [100, 650], [100, 330]
   ].map(p => p.join(',')).join(' ');
 
   const getSVGCoords = (clientX: number, clientY: number): Point => {
@@ -162,7 +174,7 @@ const MapViewer: React.FC<MapViewerProps> = ({
     return (
       <g key={f.id} transform={`translate(0, ${zOffset})`} opacity={isActive ? 1 : 0.05} style={{ transition: 'all 1.2s cubic-bezier(0.16, 1, 0.3, 1)' }}>
         {/* Floor Base */}
-        <polygon points={mallSlabPoints} fill="#ffffff" stroke="rgba(0,0,0,0.05)" strokeWidth="2" />
+        <polygon points={mallSlabPoints} fill="#dac5ad" stroke="rgba(0,0,0,0.08)" strokeWidth="2" />
         
         {/* Grid Overlay */}
         {showGrid && isEditMode && f.id === floor.id && (
@@ -226,7 +238,7 @@ const MapViewer: React.FC<MapViewerProps> = ({
   };
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-[#f8f8f8] overflow-hidden relative" 
+    <div ref={containerRef} className="w-full h-full bg-[#e5d7c6] overflow-hidden relative" 
       onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onWheel={handleWheel}
       onDoubleClick={() => {
         if (activeDrawingPoints.length > 2 && onFinishShape) {
