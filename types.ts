@@ -9,6 +9,7 @@ export enum FloorID {
 
 export type Point = [number, number];
 
+// Added 'medical' to UnitType to fix type errors for units like clinics and pharmacies
 export type UnitType = 
   | 'store' 
   | 'elevator' 
@@ -28,6 +29,7 @@ export type UnitType =
   | 'atrium'
   | 'kiosk'
   | 'pop_up'
+  | 'medical'
   | 'emergency_exit';
 
 export enum VisualizationMode {

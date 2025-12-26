@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -27,6 +26,8 @@
           overflow: hidden;
           background: var(--charcoal);
           color: white;
+          /* Fluid typography base */
+          font-size: clamp(14px, 1.2vw, 18px);
         }
         
         .font-serif-elegant {
@@ -41,7 +42,6 @@
 
         ::-webkit-scrollbar { display: none; }
         
-        /* The Invitational Canvas Background */
         .concierge-bg {
           background: radial-gradient(circle at 20% 30%, #1a1a1a 0%, #0a0a0a 100%);
           position: relative;
@@ -67,11 +67,13 @@
 
         .portal-card {
           position: relative;
-          aspect-ratio: 1 / 1;
-          border-radius: 2.5rem;
+          border-radius: 2rem;
           overflow: hidden;
           transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1);
           border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        @media (min-width: 1024px) {
+          .portal-card { border-radius: 2.5rem; }
         }
         .portal-card:hover {
           transform: scale(1.02);
@@ -102,7 +104,28 @@
           pointer-events: none;
         }
 
-        html, body, #root { height: 100%; width: 100%; position: fixed; top: 0; left: 0; }
+        /* Responsive specific height adjustments */
+        html, body, #root { 
+          height: 100%; 
+          width: 100%; 
+          position: fixed; 
+          top: 0; 
+          left: 0; 
+          display: flex;
+          flex-direction: column;
+        }
+
+        /* Ensure smooth bottom sheet behavior on mobile */
+        .mobile-bottom-sheet {
+          transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Kiosk Mode Enforcements */
+        @media (min-width: 1920px) {
+          .kiosk-text-xl { font-size: 3rem; }
+          .kiosk-p-xl { padding: 4rem; }
+          .kiosk-gap-xl { gap: 4rem; }
+        }
     </style>
 <script type="importmap">
 {
