@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
-import { FloorID, Unit, NavNode, Connection, VisualizationMode, MallState, NavigationStatus } from './types';
+import { FloorID, Unit, NavNode, Connection, VisualizationMode, MallState, NavigationStatus, Point } from './types';
 import { INITIAL_FLOORS, INITIAL_NODES, INITIAL_CONNECTIONS } from './constants';
 import MapViewer from './components/MapViewer';
 import Sidebar from './components/Sidebar';
@@ -96,6 +97,29 @@ const App: React.FC = () => {
     setShowKeyboard(false);
   };
 
+  const handleFinishShape = (points: Point[]) => {
+    if (!mallState) return;
+    const newUnit: Unit = {
+      id: `UNIT-${Date.now()}`,
+      nameEn: 'New Shop',
+      nameAr: 'محل جديد',
+      type: 'store',
+      category: 'cat-fashion',
+      floor: currentFloorID,
+      mallAddress: `${currentFloorID}-TBD`,
+      polygon: points,
+      entryNodeId: 'ML-NODE-ATRIUM', // default anchor
+      status: 'open',
+      tags: [],
+      attributes: [],
+      storeNumber: '000',
+      openingTime: '10:00',
+      closingTime: '22:00'
+    };
+    handleUpdateMallState({ units: [...mallState.units, newUnit] });
+    setSelectedDestination(newUnit);
+  };
+
   if (!mallState) return null;
 
   return (
@@ -116,10 +140,11 @@ const App: React.FC = () => {
         <MapViewer 
           floor={INITIAL_FLOORS.find(f => f.id === currentFloorID)!} units={mallState.units} nodes={INITIAL_NODES} activePath={activePath} 
           selectedUnit={selectedDestination} userLocation={{ x: mallState.kioskConfig.homeX, y: mallState.kioskConfig.homeY, floor: mallState.kioskConfig.homeFloor }} 
-          onUnitClick={(u) => { if (navStatus === 'idle') { setSelectedDestination(u); setActivePath([]); } }}
+          onUnitClick={(u) => setSelectedDestination(u)}
           isArabic={isArabic} mode={visMode} navStatus={navStatus} onNavComplete={() => setNavStatus('arrived')} onNavExit={handleExitNavigation}
           kioskConfig={mallState.kioskConfig} isEditMode={isEditMode}
           onUpdateUnit={(u) => handleUpdateMallState({ units: mallState.units.map(unit => unit.id === u.id ? u : unit) })}
+          onFinishShape={handleFinishShape}
         />
 
         <FloorSelector currentFloor={currentFloorID} onFloorChange={setCurrentFloorID} isArabic={isArabic} pathFloors={pathFloors} />
@@ -128,7 +153,6 @@ const App: React.FC = () => {
           <DestinationCard unit={selectedDestination} isArabic={isArabic} onClose={() => setSelectedDestination(null)} onNavigate={() => handleGetDirections(selectedDestination)} categories={mallState.categories} />
         )}
 
-        {/* Mode Selector matching screenshot style */}
         {navStatus === 'idle' && !isEditMode && (
           <div className="absolute bottom-12 left-1/2 -translate-x-1/2 lg:translate-x-0 lg:right-24 lg:left-auto z-40">
             <div className="bg-[#111111] backdrop-blur-3xl p-2 rounded-full border border-white/5 shadow-2xl flex gap-2">
@@ -146,7 +170,7 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {showAdmin && <AdminDashboard units={mallState.units} kioskConfig={mallState.kioskConfig} kiosksHealth={mallState.kiosksHealth || []} onClose={() => setShowAdmin(false)} isEmergency={mallState.isEmergency} onTriggerEmergency={() => handleUpdateMallState({ isEmergency: !mallState.isEmergency })} onEnterEditMode={() => { setIsEditMode(true); setVisMode(VisualizationMode.VIEW_2D); }} onUpdateKiosk={(config) => handleUpdateMallState({ kioskConfig: config })} onUpdateState={handleUpdateMallState} onAddUnit={(u) => handleUpdateMallState({ units: [...mallState.units, u] })} />}
+      {showAdmin && <AdminDashboard units={mallState.units} kioskConfig={mallState.kioskConfig} kiosksHealth={mallState.kiosksHealth || []} onClose={() => setShowAdmin(false)} isEmergency={mallState.isEmergency} onTriggerEmergency={() => handleUpdateMallState({ isEmergency: !mallState.isEmergency })} onEnterEditMode={() => { setIsEditMode(true); setVisMode(VisualizationMode.VIEW_2D); }} onUpdateKiosk={(config) => handleUpdateMallState({ kioskConfig: config })} onUpdateState={handleUpdateMallState} onAddUnit={(u) => handleUpdateMallState({ units: [...mallState.units, u] })} selectedUnit={selectedDestination} onSelectUnit={setSelectedDestination} />}
       {showAI && <AIConcierge isOpen={showAI} onClose={() => setShowAI(false)} units={mallState.units} isArabic={isArabic} onNavigate={(id) => { const u = mallState.units.find(unit => unit.id === id); if (u) { setSelectedDestination(u); handleGetDirections(u); } setShowAI(false); }} onOpenKeyboard={() => setShowKeyboard(true)} onClearInput={() => setSearchQuery('')} />}
       {showKeyboard && <VirtualKeyboard value={searchQuery} isArabic={isArabic} units={mallState.units} onChange={setSearchQuery} onEnter={() => executeSearch(searchQuery)} onClose={() => setShowKeyboard(false)} onSelectUnit={(u) => { setSelectedDestination(u); setCurrentFloorID(u.floor); setSearchQuery(isArabic ? u.nameAr : u.nameEn); setShowKeyboard(false); }} />}
     </div>
