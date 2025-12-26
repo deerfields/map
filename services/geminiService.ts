@@ -45,17 +45,14 @@ const getConciergeSystemInstruction = (units: Unit[], isArabic: boolean, userX?:
       type: u.type,
       category: u.category,
       floor: u.floor,
-      zone: u.zone,
+      // Fix: Removed reference to u.zone as it does not exist on Unit type
       hours: `${u.openingTime} - ${u.closingTime}`,
       tags: u.tags,
       attributes: u.attributes,
       isPromoted: u.isPromoted,
       distanceFromUser: distance,
-      strategicPriority: u.rentTier || 1,
-      capabilities: {
-        preOrder: u.preOrderEnabled,
-        stockCheck: !!u.checkStockUrl
-      }
+      strategicPriority: u.rentTier || 1
+      // Fix: Removed capabilities object referencing preOrderEnabled and checkStockUrl as they do not exist on Unit type
     };
   });
 
@@ -66,8 +63,8 @@ const getConciergeSystemInstruction = (units: Unit[], isArabic: boolean, userX?:
   KNOWLEDGE DOMAINS:
   1. TEMPORAL (Hours): Always check "hours" against ${currentTime}. If a user asks "is it open?", provide a definitive answer.
   2. PRODUCT/INTENT: Users ask for products (e.g. "sneakers") or features (e.g. "free wifi"). Search the "tags" and "attributes" of units.
-  3. SPATIAL STORYTELLING: Use the MallAddress and Zone. Reference landmarks like the "Grand Atrium" or "Central Elevators" to give human directions.
-  4. CONVERSATIONAL COMMERCE: If a store has 'preOrder' or 'stockCheck' capabilities, mention them as a convenience feature.
+  3. SPATIAL STORYTELLING: Use the MallAddress. Reference landmarks like the "Grand Atrium" or "Central Elevators" to give human directions.
+  4. CONVERSATIONAL COMMERCE: Suggest stores based on their category and tags.
   
   DIRECTIVE FOR PROMOTIONS:
   - If multiple results match a category, prioritize 'isPromoted' units (Strategic Partners).

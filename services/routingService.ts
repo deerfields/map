@@ -1,5 +1,10 @@
-import { NavNode, Connection, RouteMode } from '../types';
 
+import { NavNode, Connection, RouteMode, FloorID } from '../types';
+
+/**
+ * Enterprise Pathfinding for Malls
+ * Supports accessibility constraints and floor-change optimization.
+ */
 export const findPath = (
   startId: string, 
   endId: string, 
@@ -13,23 +18,19 @@ export const findPath = (
   
   if (!startNode || !endNode) return [];
 
-  const floorIndex = (f: string) => {
-    const orders: Record<string, number> = { 
-      B: 0, 
-      GL: 1, 
-      SL: 2, 
-      ML: 3, 
-      L1: 4, 
-      L2: 5 
-    };
-    return orders[f] ?? 3; // Default to Main Level if unknown
+  const floorOrder: Record<string, number> = { 
+    [FloorID.GL]: 0, 
+    [FloorID.SL]: 1, 
+    [FloorID.ML]: 2, 
+    [FloorID.L1]: 3, 
+    [FloorID.L2]: 4 
   };
 
-  // A* Heuristic: 3D Euclidean distance with heavy Z-axis weighting for floor changes
+  // Heuristic: Weighted Euclidean Distance + Floor Cost
   const getHeuristic = (a: NavNode, b: NavNode) => {
     const dx = Math.abs(a.x - b.x);
     const dy = Math.abs(a.y - b.y);
-    const dz = Math.abs(floorIndex(a.floor) - floorIndex(b.floor)) * 2500;
+    const dz = Math.abs((floorOrder[a.floor] || 0) - (floorOrder[b.floor] || 0)) * 2000;
     return Math.sqrt(dx * dx + dy * dy) + dz;
   };
 
@@ -45,8 +46,8 @@ export const findPath = (
       const path = [];
       let curr = currentId;
       while (curr) {
-        const actualNode = nodes.find(n => n.id === curr);
-        if (actualNode) path.push(actualNode);
+        const node = nodes.find(n => n.id === curr);
+        if (node) path.push(node);
         curr = cameFrom[curr];
       }
       return path.reverse();
@@ -55,34 +56,32 @@ export const findPath = (
     openSet.splice(openSet.indexOf(currentId), 1);
     const currentNode = nodes.find(n => n.id === currentId)!;
 
-    // Evaluate neighbors based on existing connections
-    const neighbors = connections.filter(c => {
+    const availableConnections = connections.filter(c => {
       if (c.isBlocked) return false;
       if (c.isRestricted && !allowRestricted) return false;
-      if (mode === 'accessible' || mode === 'stroller') {
-        if (!c.accessible) return false;
-      }
+      if ((mode === 'accessible' || mode === 'stroller') && !c.accessible) return false;
       return c.from === currentId || c.to === currentId;
     });
 
-    for (const conn of neighbors) {
+    for (const conn of availableConnections) {
       const neighborId = conn.from === currentId ? conn.to : conn.from;
       const neighborNode = nodes.find(n => n.id === neighborId);
       if (!neighborNode) continue;
 
-      let dist = Math.sqrt(Math.pow(currentNode.x - neighborNode.x, 2) + Math.pow(currentNode.y - neighborNode.y, 2));
-      let floorCost = currentNode.floor === neighborNode.floor ? 0 : 5000; // Increased floor change cost
-
+      // Base physical distance
+      let weight = Math.sqrt(Math.pow(currentNode.x - neighborNode.x, 2) + Math.pow(currentNode.y - neighborNode.y, 2));
+      
+      // Accessibility Penalties
       if (mode === 'stroller' || mode === 'accessible') {
-        // Penalize escalators for strollers
-        if (currentNode.type === 'escalator' || neighborNode.type === 'escalator') {
-          floorCost += 15000; 
-        }
+        if (neighborNode.type === 'escalator') weight += 50000; // Force elevator preference
       }
 
-      const weightMultiplier = conn.distanceWeight || 1;
-      const tentativeG = gScore[currentId] + (dist * weightMultiplier) + floorCost;
-      
+      // High Floor Change Penalty to prevent "floor hopping"
+      if (currentNode.floor !== neighborNode.floor) {
+        weight += 8000;
+      }
+
+      const tentativeG = gScore[currentId] + weight;
       if (tentativeG < (gScore[neighborId] ?? Infinity)) {
         cameFrom[neighborId] = currentId;
         gScore[neighborId] = tentativeG;

@@ -1,62 +1,153 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { FloorID, Unit, NavNode, Connection, Floor, MallCategory, VisualizationMode, KioskDevice } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { FloorID, Unit, NavNode, Connection, MallCategory, VisualizationMode, MallState, KioskHealth, NavigationStatus } from './types';
 import { INITIAL_FLOORS, INITIAL_NODES, INITIAL_CONNECTIONS } from './constants';
 import MapViewer from './components/MapViewer';
 import Sidebar from './components/Sidebar';
+import DestinationCard from './components/DestinationCard';
 import FloorSelector from './components/FloorSelector';
 import AdminDashboard from './components/AdminDashboard';
 import AIConcierge from './components/AIConcierge';
 import VirtualKeyboard from './components/VirtualKeyboard';
-import { loadMallData, saveMallData } from './services/storageService';
+import { dbService } from './services/dbService';
 import { searchMall } from './services/geminiService';
 import { findPath } from './services/routingService';
 
 const App: React.FC = () => {
-  const [mallState, setMallState] = useState(() => loadMallData());
-  const [isDataReady, setIsDataReady] = useState(false);
+  const [mallState, setMallState] = useState<MallState | null>(null);
   const [isArabic, setIsArabic] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showKeyboard, setShowKeyboard] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [visMode, setVisMode] = useState<VisualizationMode>(VisualizationMode.VIEW_2D);
+  const [navStatus, setNavStatus] = useState<NavigationStatus>('idle');
 
   const [currentFloorID, setCurrentFloorID] = useState<FloorID>(FloorID.ML);
   const [selectedDestination, setSelectedDestination] = useState<Unit | null>(null);
   const [activePath, setActivePath] = useState<NavNode[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  useEffect(() => {
-    setIsDataReady(true);
-    setCurrentFloorID(mallState.kioskConfig.homeFloor);
-  }, [mallState.kioskConfig.homeFloor]);
+  const monitorIntervalRef = useRef<number | null>(null);
 
-  const handleUpdateMallState = (updates: Partial<typeof mallState>) => {
+  useEffect(() => {
+    const boot = async () => {
+      const state = await dbService.loadState();
+      
+      if (!state.kiosksHealth || state.kiosksHealth.length === 0) {
+        state.kiosksHealth = [{
+          kioskId: state.kioskConfig.id,
+          status: 'online',
+          uptimeSeconds: 0,
+          cpuLoad: 12,
+          memoryUsage: 45,
+          lastHeartbeat: Date.now(),
+          networkLatency: 8,
+          issues: []
+        }];
+      }
+      
+      setMallState(state);
+      setCurrentFloorID(state.kioskConfig.homeFloor);
+      
+      monitorIntervalRef.current = window.setInterval(() => {
+        setMallState(prev => {
+          if (!prev) return null;
+          const updatedHealth = (prev.kiosksHealth || []).map(h => {
+            if (h.kioskId === prev.kioskConfig.id) {
+              const cpuBase = Math.max(5, Math.min(95, h.cpuLoad + (Math.random() * 10 - 5)));
+              const memBase = Math.max(20, Math.min(90, h.memoryUsage + (Math.random() * 4 - 2)));
+              const latBase = Math.max(2, Math.min(100, h.networkLatency + (Math.random() * 6 - 3)));
+              
+              const issues = [];
+              if (cpuBase > 85) issues.push('Critical CPU Spike Detected');
+              if (latBase > 70) issues.push('Network Latency Degraded');
+              
+              return {
+                ...h,
+                uptimeSeconds: h.uptimeSeconds + 5,
+                cpuLoad: Math.round(cpuBase),
+                memoryUsage: Math.round(memBase),
+                networkLatency: Math.round(latBase),
+                lastHeartbeat: Date.now(),
+                status: issues.length > 1 ? 'warning' : 'online',
+                issues
+              };
+            }
+            return h;
+          });
+          return { ...prev, kiosksHealth: updatedHealth };
+        });
+      }, 5000);
+    };
+    boot();
+    
+    return () => {
+      if (monitorIntervalRef.current) clearInterval(monitorIntervalRef.current);
+    };
+  }, []);
+
+  const handleUpdateMallState = async (updates: Partial<MallState>) => {
+    if (!mallState) return;
     const newState = { ...mallState, ...updates };
     setMallState(newState);
-    saveMallData(newState);
+    await dbService.saveState(newState);
+  };
+
+  const handleExitNavigation = () => {
+    setNavStatus('idle');
+    setActivePath([]);
+    setSelectedDestination(null);
+    setSearchQuery('');
+    setVisMode(VisualizationMode.VIEW_2D);
+    if (mallState) {
+        setCurrentFloorID(mallState.kioskConfig.homeFloor);
+    }
   };
 
   const handleGetDirections = (unit: Unit) => {
-    // Determine the closest navigation node to the Kiosk's home position
+    if (!mallState) return;
+    
+    setNavStatus('calculating');
+    
+    // Create the Kiosk Start Node
     const kioskNode: NavNode = {
-      id: 'KIOSK-START',
+      id: 'KIOSK-ANCHOR',
       floor: mallState.kioskConfig.homeFloor,
       x: mallState.kioskConfig.homeX,
       y: mallState.kioskConfig.homeY,
       type: 'corridor'
     };
 
-    const path = findPath(kioskNode.id, unit.entryNodeId, [kioskNode, ...INITIAL_NODES], INITIAL_CONNECTIONS, 'shortest');
+    // Find nearest physical node on the same floor to bridge the kiosk to the grid
+    const sameFloorNodes = INITIAL_NODES.filter(n => n.floor === kioskNode.floor);
+    const nearestNode = sameFloorNodes.reduce((prev, curr) => {
+      const distPrev = Math.sqrt(Math.pow(prev.x - kioskNode.x, 2) + Math.pow(prev.y - kioskNode.y, 2));
+      const distCurr = Math.sqrt(Math.pow(curr.x - kioskNode.x, 2) + Math.pow(curr.y - kioskNode.y, 2));
+      return distCurr < distPrev ? curr : prev;
+    }, sameFloorNodes[0]);
+
+    const tempConnections: Connection[] = [
+      ...INITIAL_CONNECTIONS,
+      { from: kioskNode.id, to: nearestNode.id, accessible: true }
+    ];
+    
+    const path = findPath(kioskNode.id, unit.entryNodeId, [kioskNode, ...INITIAL_NODES], tempConnections, 'shortest');
+    
     if (path.length > 0) {
       setActivePath(path);
-      setCurrentFloorID(path[0].floor);
+      // Brief delay to allow the "calculating" UI to breathe before snapping to the cinematic view
+      setTimeout(() => {
+        setNavStatus('following');   // Start Cinematic Move
+      }, 1000);
+    } else {
+      console.warn("Navigation Engine: No path found to unit " + unit.id);
+      setNavStatus('idle');
     }
   };
 
   const executeSearch = async (q: string) => {
+    if (!mallState) return;
     const res = await searchMall(q, mallState.units);
     if (res.found) {
       const foundUnit = mallState.units.find(u => u.id === res.storeId);
@@ -68,33 +159,35 @@ const App: React.FC = () => {
     setShowKeyboard(false);
   };
 
-  if (!isDataReady) return null;
+  if (!mallState) return (
+    <div className="h-full w-full bg-[#0a0a0a] flex flex-col items-center justify-center text-white">
+      <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-8" />
+      <p className="text-xs font-black uppercase tracking-[0.5em] opacity-40">Spatial Database Initializing...</p>
+    </div>
+  );
 
   return (
-    <div className={`flex h-[100dvh] w-full overflow-hidden bg-[#fcfcfc] ${isArabic ? 'flex-row-reverse' : 'flex-row'}`} dir={isArabic ? 'rtl' : 'ltr'}>
+    <div className={`flex h-full w-full overflow-hidden bg-[#fcfcfc] ${isArabic ? 'flex-row-reverse text-right' : 'flex-row text-left'}`} dir={isArabic ? 'rtl' : 'ltr'}>
       <Sidebar 
-        isOpen={!isEditMode && !isDrawingMode}
+        isOpen={!isEditMode && navStatus === 'idle'}
         isArabic={isArabic}
         query={searchQuery}
         onSearch={executeSearch}
         onOpenKeyboard={() => setShowKeyboard(true)}
         selectedStore={selectedDestination}
         activePath={activePath}
-        onReset={() => {
-          setSelectedDestination(null);
-          setSearchQuery('');
-          setActivePath([]);
-          setCurrentFloorID(mallState.kioskConfig.homeFloor);
-        }}
+        onReset={handleExitNavigation}
         onToggleLang={() => setIsArabic(!isArabic)}
         onOpenAdmin={() => setShowAdmin(true)}
         categories={mallState.categories}
+        events={mallState.events}
         units={mallState.units}
         onSelectStore={(u) => {
           setSelectedDestination(u);
           setCurrentFloorID(u.floor);
           setSearchQuery(isArabic ? u.nameAr : u.nameEn);
           setActivePath([]);
+          setNavStatus('idle');
         }}
         routeMode="shortest"
         onSetRouteMode={() => {}}
@@ -102,6 +195,8 @@ const App: React.FC = () => {
         isOnline={true}
         isEmergency={mallState.isEmergency}
         onGetDirections={handleGetDirections}
+        currentFloor={currentFloorID}
+        onFloorChange={setCurrentFloorID}
       />
 
       <main className="flex-1 relative h-full">
@@ -113,63 +208,69 @@ const App: React.FC = () => {
           selectedUnit={selectedDestination} 
           userLocation={{ x: mallState.kioskConfig.homeX, y: mallState.kioskConfig.homeY, floor: mallState.kioskConfig.homeFloor, accuracy: 0 }} 
           onUnitClick={(u) => {
+            if (navStatus !== 'idle') return;
             setSelectedDestination(u);
             setActivePath([]);
-          }}
-          isEditMode={isEditMode}
-          isDrawingMode={isDrawingMode}
-          onUpdateUnit={(u) => {
-            const nextUnits = mallState.units.map(unit => unit.id === u.id ? u : unit);
-            handleUpdateMallState({ units: nextUnits });
+            setNavStatus('idle');
           }}
           isArabic={isArabic}
           mode={visMode}
+          isEditMode={isEditMode}
+          onUpdateUnit={(updatedUnit) => {
+            const nextUnits = mallState.units.map(u => u.id === updatedUnit.id ? updatedUnit : u);
+            handleUpdateMallState({ units: nextUnits });
+          }}
+          onAddUnitAtPoint={() => {}}
+          navStatus={navStatus}
+          onNavComplete={() => setNavStatus('arrived')}
+          onNavExit={handleExitNavigation}
+          kioskConfig={mallState.kioskConfig}
         />
         
-        {/* You Are Here Indicator (Kiosk Specific) */}
-        {currentFloorID === mallState.kioskConfig.homeFloor && (
-          <div 
-            className="absolute z-40 pointer-events-none transform -translate-x-1/2 -translate-y-1/2"
-            style={{ 
-              left: `${mallState.kioskConfig.homeX}px`, 
-              top: `${mallState.kioskConfig.homeY}px`,
-              display: visMode === VisualizationMode.VIEW_2D ? 'block' : 'none' 
-            }}
-          >
-            <div className="w-10 h-10 bg-blue-500 rounded-full border-4 border-white shadow-2xl animate-pulse" />
-            <div className="bg-blue-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full mt-2 uppercase text-center shadow-lg">YOU</div>
+        {selectedDestination && !isEditMode && navStatus === 'idle' && (
+          <DestinationCard 
+            unit={selectedDestination}
+            isArabic={isArabic}
+            onClose={() => setSelectedDestination(null)}
+            onNavigate={() => handleGetDirections(selectedDestination)}
+            categories={mallState.categories}
+          />
+        )}
+
+        {navStatus === 'calculating' && (
+          <div className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-black/50 backdrop-blur-2xl animate-in fade-in duration-500">
+             <div className="w-24 h-24 border-4 border-[#d4af37] border-t-transparent rounded-full animate-spin mb-12 shadow-[0_0_50px_rgba(212,175,55,0.4)]" />
+             <p className="text-xl font-black uppercase tracking-[0.6em] text-white">Synthesizing Splines...</p>
           </div>
         )}
 
-        <div className={`absolute bottom-10 z-30 flex bg-[#111111] p-1.5 rounded-full shadow-2xl border border-white/10 ${isArabic ? 'left-32' : 'right-32'}`}>
-           {Object.values(VisualizationMode).map(mode => (
-             <button 
-               key={mode} 
-               onClick={() => setVisMode(mode)}
-               className={`px-6 py-2.5 rounded-full text-[10px] font-black tracking-widest transition-all ${visMode === mode ? 'bg-[#d4af37] text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}
-             >
-               {mode}
-             </button>
-           ))}
-        </div>
-
-        <FloorSelector currentFloor={currentFloorID} onFloorChange={setCurrentFloorID} isArabic={isArabic} pathFloors={activePath.map(n => n.floor)} />
+        {navStatus === 'idle' && (
+          <div className={`absolute bottom-12 z-30 flex bg-black/95 backdrop-blur-3xl p-2 rounded-3xl border border-white/10 ${isArabic ? 'left-32' : 'right-32'}`}>
+            {Object.values(VisualizationMode).filter(m => m !== VisualizationMode.VIEW_CINEMATIC).map(mode => (
+              <button 
+                key={mode} 
+                onClick={() => setVisMode(mode)}
+                className={`px-8 py-3 rounded-2xl text-[10px] font-black tracking-widest transition-all ${visMode === mode ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' : 'text-slate-500 hover:text-white'}`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+        )}
       </main>
 
       {showAdmin && (
         <AdminDashboard 
           units={mallState.units} 
           kioskConfig={mallState.kioskConfig}
+          kiosksHealth={mallState.kiosksHealth || []}
           onClose={() => setShowAdmin(false)} 
           isEmergency={mallState.isEmergency}
           onTriggerEmergency={() => handleUpdateMallState({ isEmergency: !mallState.isEmergency })}
-          onEnterEditMode={() => { setShowAdmin(false); setIsEditMode(true); }}
-          onEnterDrawingMode={() => { setShowAdmin(false); setIsDrawingMode(true); }}
-          onUpdateUnit={(u) => {
-             const nextUnits = mallState.units.map(unit => unit.id === u.id ? u : unit);
-             handleUpdateMallState({ units: nextUnits });
-          }}
+          onEnterEditMode={() => setIsEditMode(true)}
           onUpdateKiosk={(config) => handleUpdateMallState({ kioskConfig: config })}
+          onUpdateState={handleUpdateMallState}
+          onAddUnit={(u) => handleUpdateMallState({ units: [...mallState.units, u] })}
         />
       )}
 
@@ -207,19 +308,9 @@ const App: React.FC = () => {
             setSearchQuery(isArabic ? u.nameAr : u.nameEn);
             setShowKeyboard(false);
             setActivePath([]);
+            setNavStatus('idle');
           }}
         />
-      )}
-
-      {(isEditMode || isDrawingMode) && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[300]">
-          <button 
-            onClick={() => { setIsEditMode(false); setIsDrawingMode(false); setSelectedDestination(null); }} 
-            className="bg-[#111111] text-white h-20 px-12 rounded-full font-bold uppercase text-[10px] tracking-[0.3em] shadow-2xl active:scale-95 transition-all border border-[#d4af37]"
-          >
-            Commit Design
-          </button>
-        </div>
       )}
     </div>
   );

@@ -1,6 +1,5 @@
-
 import { Unit, MallCategory, MallState, KioskDevice, FloorID } from '../types';
-import { INITIAL_UNITS, INITIAL_CATEGORIES } from '../constants';
+import { INITIAL_UNITS, INITIAL_CATEGORIES, INITIAL_EVENTS } from '../constants';
 
 const STORAGE_KEY = 'Deerfields_Mall_State_v2';
 
@@ -23,10 +22,13 @@ export const loadMallData = (): MallState => {
     }
   }
   
+  // Fix: Added INITIAL_EVENTS and kiosksHealth to initialState to satisfy MallState interface
   const initialState: MallState = {
     units: INITIAL_UNITS,
     categories: INITIAL_CATEGORIES,
+    events: INITIAL_EVENTS,
     kioskConfig: DEFAULT_KIOSK,
+    kiosksHealth: [],
     isEmergency: false
   };
   saveMallData(initialState);

@@ -1,12 +1,10 @@
 
-
 export enum FloorID {
-  B = 'B',
-  GL = 'GL',
-  SL = 'SL',
-  ML = 'ML',
-  L1 = 'L1',
-  L2 = 'L2'
+  GL = 'GL', // Garden Level
+  SL = 'SL', // Service Level
+  ML = 'ML', // Main Level
+  L1 = 'L1', // Level 1
+  L2 = 'L2'  // Level 2
 }
 
 export type Point = [number, number];
@@ -22,23 +20,21 @@ export type UnitType =
   | 'restroom_baby' 
   | 'info' 
   | 'parking'
-  | 'laundry' 
   | 'coffee'
   | 'restaurant'
-  | 'walkway'
+  | 'cinema'
+  | 'gym'
+  | 'museum'
   | 'atrium'
-  | 'control_room'
-  | 'admin_office'
-  | 'garden'
   | 'kiosk'
   | 'pop_up'
-  | 'emergency_exit'
-  | 'parking_bay';
+  | 'emergency_exit';
 
 export enum VisualizationMode {
   VIEW_2D = '2D',
   VIEW_3D = '3D',
-  VIEW_4D = '4D'
+  VIEW_4D = '4D',
+  VIEW_CINEMATIC = 'CINEMATIC'
 }
 
 export interface Floor {
@@ -57,6 +53,29 @@ export interface MallCategory {
   iconKey?: string;
 }
 
+export interface MallEvent {
+  id: string;
+  titleEn: string;
+  titleAr: string;
+  descEn: string;
+  descAr: string;
+  dateEn: string;
+  dateAr: string;
+  tags: string[];
+  imageUrl?: string;
+}
+
+export interface KioskHealth {
+  kioskId: string;
+  status: 'online' | 'offline' | 'warning';
+  uptimeSeconds: number;
+  cpuLoad: number;
+  memoryUsage: number;
+  lastHeartbeat: number;
+  networkLatency: number;
+  issues: string[];
+}
+
 export interface Unit {
   id: string;
   nameEn: string;
@@ -68,23 +87,12 @@ export interface Unit {
   type: UnitType;
   category: string;
   floor: FloorID;
-  zone?: string; 
   mallAddress: string; 
   polygon: Point[]; 
-  width?: number;
-  height?: number; 
-  heightMeters?: number; 
-  areaSqm?: number;     
-  volumeCum?: number;   
   entryNodeId: string;
   status: 'open' | 'closed' | 'coming_soon' | 'maintenance';
-  isRestricted?: boolean; 
   isPromoted?: boolean;
   rentTier?: 1 | 2 | 3 | 4 | 5; 
-  promotionTextEn?: string;
-  promotionTextAr?: string; 
-  activeOfferEn?: string;
-  activeOfferAr?: string;
   tags: string[];
   attributes: string[]; 
   storeNumber: string;
@@ -93,9 +101,6 @@ export interface Unit {
   logoUrl?: string; 
   bannerUrl?: string;
   phoneNumber?: string;
-  conversionCount?: number;
-  preOrderEnabled?: boolean;
-  checkStockUrl?: string;
 }
 
 export interface NavNode {
@@ -115,28 +120,7 @@ export interface Connection {
   to: string;
   accessible: boolean;
   isBlocked?: boolean; 
-  distanceWeight?: number; 
-  // Fix: Added isRestricted to resolve error in services/routingService.ts on line 61
   isRestricted?: boolean; 
-}
-
-// Fix: Added ZoneLabel interface used in constants.tsx
-export interface ZoneLabel {
-  id: string;
-  floor: FloorID;
-  x: number;
-  y: number;
-  nameEn: string;
-  nameAr: string;
-}
-
-// Fix: Added Kiosk interface used in constants.tsx
-export interface Kiosk {
-  id: string;
-  floor: FloorID;
-  x: number;
-  y: number;
-  name: string;
 }
 
 export interface KioskDevice {
@@ -153,6 +137,10 @@ export type RouteMode = 'shortest' | 'accessible' | 'stroller' | 'emergency';
 export interface MallState {
   units: Unit[];
   categories: MallCategory[];
+  events: MallEvent[];
   kioskConfig: KioskDevice;
+  kiosksHealth: KioskHealth[];
   isEmergency: boolean;
 }
+
+export type NavigationStatus = 'idle' | 'calculating' | 'following' | 'arrived';
